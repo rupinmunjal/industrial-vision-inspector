@@ -128,6 +128,12 @@ The test set contained 472 true negatives, 627 true positives, no false positive
 
 ![Held-out confusion matrix](reports/metrics/confusion_matrix.png)
 
+## Inspection storage
+
+Inspection history is stored in a local SQLite database through a thin `sqlite3` data-access module. SQLite provides transactions and durable storage without requiring a database server, which fits a single-operator desktop application. The schema stores the inspection time, source image path, pass/fail result, model confidence, and optional operator notes. It does not store a defect subtype because the current classifier does not predict one.
+
+Timestamps are normalized to UTC. History queries return newest records first and can filter by result or a half-open `[start, end)` date range. The project uses the Python standard library directly rather than adding an ORM for one table.
+
 ## Current limitations
 
 - Trained weights are not committed; reproduce them with `scripts/train_model.py` before running inference.
