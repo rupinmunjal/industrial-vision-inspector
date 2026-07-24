@@ -6,10 +6,13 @@ import random
 import shutil
 import subprocess
 import zipfile
+from collections import defaultdict
+from hashlib import sha256
 from pathlib import Path
 
 KAGGLE_SLUG = "ravirajsinh45/real-life-industrial-dataset-of-casting-product"
 ARCHIVE_NAME = "real-life-industrial-dataset-of-casting-product.zip"
+CLASSIFICATION_SUBDIR = Path("casting_data/casting_data")
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 CLASS_ALIASES = {
     "def_front": "defective",
@@ -30,9 +33,12 @@ def download_dataset(
     """Download the Kaggle archive once and extract it into the local cache."""
     cache_path = Path(cache_dir)
     extracted_path = Path(extract_dir)
+    dataset_path = extracted_path / CLASSIFICATION_SUBDIR
     complete_marker = extracted_path / ".complete"
     if complete_marker.is_file():
-        return extracted_path
+        if not dataset_path.is_dir():
+            raise NotADirectoryError(f"300x300 casting dataset not found: {dataset_path}")
+        return dataset_path
 
     archive_path = cache_path / ARCHIVE_NAME
     if not archive_path.is_file():
@@ -59,8 +65,10 @@ def download_dataset(
     extracted_path.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive_path) as archive:
         archive.extractall(extracted_path)
+    if not dataset_path.is_dir():
+        raise NotADirectoryError(f"300x300 casting dataset not found: {dataset_path}")
     complete_marker.write_text("downloaded and extracted\n", encoding="utf-8")
-    return extracted_path
+    return dataset_path
 
 
 def discover_images(source_dir: str | Path) -> dict[str, list[Path]]:
@@ -68,6 +76,9 @@ def discover_images(source_dir: str | Path) -> dict[str, list[Path]]:
     source_path = Path(source_dir)
     if not source_path.is_dir():
         raise NotADirectoryError(f"dataset source is not a folder: {source_path}")
+    nested_dataset = source_path / CLASSIFICATION_SUBDIR
+    if nested_dataset.is_dir():
+        source_path = nested_dataset
 
     found: dict[str, list[Path]] = {"defective": [], "ok_front": []}
     for path in source_path.rglob("*"):
@@ -123,13 +134,30 @@ def prepare_dataset(
         "test": {},
     }
     for label in sorted(images):
-        shuffled = images[label].copy()
-        rng.shuffle(shuffled)
-        train_end = int(len(shuffled) * train_ratio)
-        val_end = train_end + int(len(shuffled) * val_ratio)
-        split_images["train"][label] = shuffled[:train_end]
-        split_images["val"][label] = shuffled[train_end:val_end]
-        split_images["test"][label] = shuffled[val_end:]
+        duplicate_groups: dict[str, list[Path]] = defaultdict(list)
+        for path in images[label]:
+            digest = sha256(path.read_bytes()).hexdigest()
+            duplicate_groups[digest].append(path)
+        groups = list(duplicate_groups.values())
+        rng.shuffle(groups)
+
+        targets = {
+            "train": int(len(images[label]) * train_ratio),
+            "val": int(len(images[label]) * val_ratio),
+        }
+        targets["test"] = len(images[label]) - targets["train"] - targets["val"]
+        for split in split_images:
+            split_images[split][label] = []
+        for group in groups:
+            group_size = len(group)
+            split = max(
+                split_images,
+                key=lambda name: (
+                    targets[name] - len(split_images[name][label]) >= group_size,
+                    targets[name] - len(split_images[name][label]),
+                ),
+            )
+            split_images[split][label].extend(group)
 
     counts: dict[str, dict[str, int]] = {}
     for split, classes in split_images.items():
@@ -149,4 +177,3 @@ def prepare_dataset(
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return counts
-
