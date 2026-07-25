@@ -1,6 +1,6 @@
 # Industrial Vision Inspector
 
-Industrial Vision Inspector is a desktop quality-control project for classifying top-view casting images as defective or acceptable. The target dataset contains submersible pump impeller images captured from one product type and camera angle. The project currently includes reproducible data preparation, OpenCV ingestion, a YOLOv8 classification wrapper, training, and held-out evaluation. Storage, the desktop UI, and reporting will be added in later verified phases.
+Industrial Vision Inspector is a desktop quality-control project for classifying top-view casting images as defective or acceptable. The target dataset contains submersible pump impeller images captured from one product type and camera angle. The project includes reproducible data preparation, OpenCV ingestion, a YOLOv8 classification wrapper, held-out evaluation, SQLite inspection history, and a PySide6 operator interface. Reporting will be added in a later verified phase.
 
 Manual visual inspection can vary between operators and across a long shift. A small classification model can provide a consistent first-pass decision and preserve each result for review. This project is intentionally a demonstrator, not a claim of production-line readiness.
 
@@ -20,16 +20,16 @@ flowchart LR
     D --> F[CSV and PDF reports]
 ```
 
-The ingestion, classification, training, and evaluation components now exist. Datasets and trained weights are generated locally and intentionally excluded from Git; the compact evaluation metrics and confusion matrix are versioned for reproducibility.
+The ingestion, classification, storage, and UI components use one inspection path. Datasets, trained weights, captured webcam frames, and inspection databases are generated locally and intentionally excluded from Git; the compact evaluation metrics and confusion matrix are versioned for reproducibility.
 
-## Phase 1 setup
+## Setup
 
 Use Python 3.11 or 3.12. From the repository root:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install numpy opencv-python pytest kaggle ultralytics matplotlib
+python -m pip install numpy opencv-python pytest kaggle ultralytics matplotlib PySide6
 ```
 
 Dependency versions will be pinned during Phase 6, after the complete runtime dependency set is known. Ultralytics installs PyTorch as a dependency. On a CPU-only Linux machine, install the smaller CPU wheels first to avoid downloading unused CUDA libraries:
@@ -133,6 +133,36 @@ The test set contained 472 true negatives, 627 true positives, no false positive
 Inspection history is stored in a local SQLite database through a thin `sqlite3` data-access module. SQLite provides transactions and durable storage without requiring a database server, which fits a single-operator desktop application. The schema stores the inspection time, source image path, pass/fail result, model confidence, and optional operator notes. It does not store a defect subtype because the current classifier does not predict one.
 
 Timestamps are normalized to UTC. History queries return newest records first and can filter by result or a half-open `[start, end)` date range. The project uses the Python standard library directly rather than adding an ORM for one table.
+
+## Run the desktop application
+
+Train the model first, then launch the operator interface from the repository root:
+
+```bash
+python scripts/run_app.py
+```
+
+The Inspect tab accepts one image, every supported image directly inside a folder, or a captured webcam frame. Folder work runs outside the GUI thread and writes each completed result to `data/inspections.db`. Webcam inference is operator-triggered rather than continuous; captured frames are saved under `data/captures/` so history rows refer to real files. The History tab shows the stored UTC timestamp, image path, result, confidence, and notes, with result and UTC date filters.
+
+![Inspect view with a defective casting](docs/screenshots/inspect-view.png)
+
+![SQLite-backed inspection history](docs/screenshots/history-view.png)
+
+### UI smoke-test checklist
+
+1. Launch the app and confirm the Inspect and History tabs open without an error.
+2. Inspect known acceptable and defective held-out images; confirm the badge, confidence, and approximate defective highlight.
+3. Select `tests/fixtures/` as a folder; confirm both images complete and two history rows appear.
+4. Start the webcam, inspect one frame, and confirm the saved capture appears in history. This step requires local camera permission.
+5. Filter history by result and UTC date, then restart the app and confirm the rows persist.
+
+For a headless startup check that loads the real weights and exits automatically:
+
+```bash
+QT_QPA_PLATFORM=offscreen python scripts/run_app.py \
+  --database /tmp/industrial-vision-smoke.db \
+  --smoke-test
+```
 
 ## Current limitations
 
