@@ -3,32 +3,38 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 import cv2
 from numpy.typing import NDArray
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QDate, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
     QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QProgressBar,
     QPushButton,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from industrial_vision_inspector.ingestion import iter_frames, load_folder, load_image
 from industrial_vision_inspector.inspection import InspectionResult, Inspector
-from industrial_vision_inspector.storage import InspectionDatabase
+from industrial_vision_inspector.storage import InspectionDatabase, InspectionOutcome
 
 
 class InspectionWorker(QThread):
@@ -124,6 +130,7 @@ class ImagePreview(QLabel):
 class InspectView(QWidget):
     """Run inspections from image, folder, or webcam sources."""
 
+    history_changed = Signal()
     batch_finished = Signal()
 
     def __init__(
@@ -337,6 +344,7 @@ class InspectView(QWidget):
             )
         self.message_label.setStyleSheet("")
         self.message_label.setText("Inspection saved to history")
+        self.history_changed.emit()
 
     def _show_progress(self, completed: int, total: int) -> None:
         self.progress.setRange(0, total)
@@ -362,6 +370,115 @@ class InspectView(QWidget):
         self.inspect_frame_button.setEnabled(False)
 
 
+class HistoryView(QWidget):
+    """Display and filter persisted inspection records."""
+
+    def __init__(self, database: InspectionDatabase) -> None:
+        super().__init__()
+        self.database = database
+
+        self.result_filter = QComboBox()
+        self.result_filter.addItem("All results", None)
+        self.result_filter.addItem("Pass", "pass")
+        self.result_filter.addItem("Fail", "fail")
+
+        self.date_filter = QCheckBox("Limit to UTC date range")
+        today = QDate.currentDate()
+        self.from_date = QDateEdit(today.addMonths(-1))
+        self.to_date = QDateEdit(today)
+        for date_edit in (self.from_date, self.to_date):
+            date_edit.setCalendarPopup(True)
+            date_edit.setDisplayFormat("yyyy-MM-dd")
+            date_edit.setEnabled(False)
+        self.date_filter.toggled.connect(self.from_date.setEnabled)
+        self.date_filter.toggled.connect(self.to_date.setEnabled)
+
+        self.apply_button = QPushButton("Apply Filters")
+        self.clear_button = QPushButton("Clear Filters")
+        self.refresh_button = QPushButton("Refresh")
+        self.apply_button.clicked.connect(self.refresh)
+        self.clear_button.clicked.connect(self.clear_filters)
+        self.refresh_button.clicked.connect(self.refresh)
+
+        filters = QHBoxLayout()
+        filters.addWidget(QLabel("Result:"))
+        filters.addWidget(self.result_filter)
+        filters.addWidget(self.date_filter)
+        filters.addWidget(QLabel("From:"))
+        filters.addWidget(self.from_date)
+        filters.addWidget(QLabel("To:"))
+        filters.addWidget(self.to_date)
+        filters.addWidget(self.apply_button)
+        filters.addWidget(self.clear_button)
+        filters.addWidget(self.refresh_button)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["ID", "Timestamp (UTC)", "Image", "Result", "Confidence", "Notes"]
+        )
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+
+        self.message_label = QLabel("")
+        layout = QVBoxLayout(self)
+        layout.addLayout(filters)
+        layout.addWidget(self.table)
+        layout.addWidget(self.message_label)
+        self.refresh()
+
+    def refresh(self) -> None:
+        result: InspectionOutcome | None = self.result_filter.currentData()
+        start = None
+        end = None
+        if self.date_filter.isChecked():
+            start_date = self.from_date.date().toPython()
+            end_date = self.to_date.date().toPython()
+            if start_date > end_date:
+                self.message_label.setStyleSheet("color: #b91c1c;")
+                self.message_label.setText("From date must not be after To date")
+                return
+            start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+            end = datetime.combine(
+                end_date + timedelta(days=1), time.min, tzinfo=timezone.utc
+            )
+
+        try:
+            records = self.database.list_inspections(
+                result=result,
+                start=start,
+                end=end,
+            )
+        except Exception as error:
+            self.message_label.setStyleSheet("color: #b91c1c;")
+            self.message_label.setText(str(error))
+            return
+
+        self.table.setRowCount(len(records))
+        for row, record in enumerate(records):
+            values = (
+                str(record.id),
+                record.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                record.image_path,
+                record.result.upper(),
+                f"{record.confidence:.1%}",
+                record.notes or "",
+            )
+            for column, value in enumerate(values):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+
+        self.message_label.setStyleSheet("")
+        self.message_label.setText(f"{len(records)} inspection(s)")
+
+    def clear_filters(self) -> None:
+        self.result_filter.setCurrentIndex(0)
+        self.date_filter.setChecked(False)
+        self.refresh()
+
+
 class InspectionWindow(QMainWindow):
     """Main application window containing inspection and history views."""
 
@@ -383,9 +500,12 @@ class InspectionWindow(QMainWindow):
             capture_dir,
             camera_index=camera_index,
         )
+        self.history_view = HistoryView(database)
+        self.inspect_view.history_changed.connect(self.history_view.refresh)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.inspect_view, "Inspect")
+        self.tabs.addTab(self.history_view, "History")
         self.setCentralWidget(self.tabs)
 
     def closeEvent(self, event: QCloseEvent) -> None:
