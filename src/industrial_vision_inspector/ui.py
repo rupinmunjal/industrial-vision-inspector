@@ -34,7 +34,16 @@ from PySide6.QtWidgets import (
 
 from industrial_vision_inspector.ingestion import iter_frames, load_folder, load_image
 from industrial_vision_inspector.inspection import InspectionResult, Inspector
-from industrial_vision_inspector.storage import InspectionDatabase, InspectionOutcome
+from industrial_vision_inspector.reporting import (
+    prepare_report_data,
+    write_inspection_pdf,
+    write_inspections_csv,
+)
+from industrial_vision_inspector.storage import (
+    InspectionDatabase,
+    InspectionOutcome,
+    InspectionRecord,
+)
 
 
 class InspectionWorker(QThread):
@@ -396,9 +405,13 @@ class HistoryView(QWidget):
         self.apply_button = QPushButton("Apply Filters")
         self.clear_button = QPushButton("Clear Filters")
         self.refresh_button = QPushButton("Refresh")
+        self.export_csv_button = QPushButton("Export CSV")
+        self.export_pdf_button = QPushButton("Export PDF")
         self.apply_button.clicked.connect(self.refresh)
         self.clear_button.clicked.connect(self.clear_filters)
         self.refresh_button.clicked.connect(self.refresh)
+        self.export_csv_button.clicked.connect(lambda: self.export_csv())
+        self.export_pdf_button.clicked.connect(lambda: self.export_pdf())
 
         filters = QHBoxLayout()
         filters.addWidget(QLabel("Result:"))
@@ -411,6 +424,8 @@ class HistoryView(QWidget):
         filters.addWidget(self.apply_button)
         filters.addWidget(self.clear_button)
         filters.addWidget(self.refresh_button)
+        filters.addWidget(self.export_csv_button)
+        filters.addWidget(self.export_pdf_button)
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
@@ -431,30 +446,10 @@ class HistoryView(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
-        result: InspectionOutcome | None = self.result_filter.currentData()
-        start = None
-        end = None
-        if self.date_filter.isChecked():
-            start_date = self.from_date.date().toPython()
-            end_date = self.to_date.date().toPython()
-            if start_date > end_date:
-                self.message_label.setStyleSheet("color: #b91c1c;")
-                self.message_label.setText("From date must not be after To date")
-                return
-            start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
-            end = datetime.combine(
-                end_date + timedelta(days=1), time.min, tzinfo=timezone.utc
-            )
-
         try:
-            records = self.database.list_inspections(
-                result=result,
-                start=start,
-                end=end,
-            )
+            records = self._filtered_records()
         except Exception as error:
-            self.message_label.setStyleSheet("color: #b91c1c;")
-            self.message_label.setText(str(error))
+            self._show_error(str(error))
             return
 
         self.table.setRowCount(len(records))
@@ -477,6 +472,68 @@ class HistoryView(QWidget):
         self.result_filter.setCurrentIndex(0)
         self.date_filter.setChecked(False)
         self.refresh()
+
+    def export_csv(self, output_path: str | Path | None = None) -> Path | None:
+        if output_path is None:
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export inspection history",
+                "inspection-history.csv",
+                "CSV files (*.csv)",
+            )
+            if not selected:
+                return None
+            output_path = selected
+        path = _ensure_suffix(Path(output_path), ".csv")
+        try:
+            write_inspections_csv(self._filtered_records(), path)
+        except Exception as error:
+            self._show_error(str(error))
+            return None
+        self.message_label.setStyleSheet("")
+        self.message_label.setText(f"CSV exported to {path}")
+        return path
+
+    def export_pdf(self, output_path: str | Path | None = None) -> Path | None:
+        if output_path is None:
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export inspection report",
+                "inspection-report.pdf",
+                "PDF files (*.pdf)",
+            )
+            if not selected:
+                return None
+            output_path = selected
+        path = _ensure_suffix(Path(output_path), ".pdf")
+        try:
+            report = prepare_report_data(self._filtered_records())
+            write_inspection_pdf(report, path)
+        except Exception as error:
+            self._show_error(str(error))
+            return None
+        self.message_label.setStyleSheet("")
+        self.message_label.setText(f"PDF exported to {path}")
+        return path
+
+    def _filtered_records(self) -> list[InspectionRecord]:
+        result: InspectionOutcome | None = self.result_filter.currentData()
+        start = None
+        end = None
+        if self.date_filter.isChecked():
+            start_date = self.from_date.date().toPython()
+            end_date = self.to_date.date().toPython()
+            if start_date > end_date:
+                raise ValueError("From date must not be after To date")
+            start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+            end = datetime.combine(
+                end_date + timedelta(days=1), time.min, tzinfo=timezone.utc
+            )
+        return self.database.list_inspections(result=result, start=start, end=end)
+
+    def _show_error(self, message: str) -> None:
+        self.message_label.setStyleSheet("color: #b91c1c;")
+        self.message_label.setText(message)
 
 
 class InspectionWindow(QMainWindow):
@@ -535,3 +592,7 @@ def run_app(
     if smoke_test:
         QTimer.singleShot(250, window.close)
     return app.exec()
+
+
+def _ensure_suffix(path: Path, suffix: str) -> Path:
+    return path if path.suffix.casefold() == suffix else path.with_suffix(suffix)

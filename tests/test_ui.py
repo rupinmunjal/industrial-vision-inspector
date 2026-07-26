@@ -1,3 +1,4 @@
+import csv
 import os
 import time
 from datetime import datetime, timezone
@@ -161,4 +162,32 @@ def test_history_filters_by_result_and_inclusive_utc_dates(
     assert view.table.rowCount() == 1
     assert view.table.item(0, 2).text() == "accepted.jpg"
     assert view.table.item(0, 3).text() == "PASS"
+    view.close()
+
+
+def test_history_exports_current_filter_to_csv_and_pdf(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    database = InspectionDatabase(tmp_path / "inspections.db")
+    timestamp = datetime(2026, 7, 26, 15, tzinfo=timezone.utc)
+    database.insert_inspection(
+        FIXTURES / "ok_sample.ppm", "pass", 0.93, timestamp=timestamp
+    )
+    database.insert_inspection(
+        FIXTURES / "defective_sample.ppm", "fail", 0.96, timestamp=timestamp
+    )
+    view = HistoryView(database)
+    view.result_filter.setCurrentIndex(view.result_filter.findData("fail"))
+
+    csv_path = view.export_csv(tmp_path / "filtered")
+    pdf_path = view.export_pdf(tmp_path / "filtered")
+    qapp.processEvents()
+
+    assert csv_path == tmp_path / "filtered.csv"
+    with csv_path.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 1
+    assert rows[0]["result"] == "fail"
+    assert pdf_path == tmp_path / "filtered.pdf"
+    assert pdf_path.stat().st_size > 2_000
     view.close()
