@@ -1,6 +1,6 @@
 # Industrial Vision Inspector
 
-Industrial Vision Inspector is a desktop quality-control project for classifying top-view casting images as defective or acceptable. The target dataset contains submersible pump impeller images captured from one product type and camera angle. The project includes reproducible data preparation, OpenCV ingestion, a YOLOv8 classification wrapper, held-out evaluation, SQLite inspection history, and a PySide6 operator interface. Reporting will be added in a later verified phase.
+Industrial Vision Inspector is a desktop quality-control project for classifying top-view casting images as defective or acceptable. The target dataset contains submersible pump impeller images captured from one product type and camera angle. The project includes reproducible data preparation, OpenCV ingestion, a YOLOv8 classification wrapper, held-out evaluation, SQLite inspection history, a PySide6 operator interface, and CSV/PDF reporting.
 
 Manual visual inspection can vary between operators and across a long shift. A small classification model can provide a consistent first-pass decision and preserve each result for review. This project is intentionally a demonstrator, not a claim of production-line readiness.
 
@@ -20,7 +20,7 @@ flowchart LR
     D --> F[CSV and PDF reports]
 ```
 
-The ingestion, classification, storage, and UI components use one inspection path. Datasets, trained weights, captured webcam frames, and inspection databases are generated locally and intentionally excluded from Git; the compact evaluation metrics and confusion matrix are versioned for reproducibility.
+The ingestion, classification, storage, UI, and reporting components use one inspection path. Datasets, trained weights, captured webcam frames, inspection databases, and generated reports are intentionally excluded from Git; the compact evaluation metrics and confusion matrix are versioned for reproducibility.
 
 ## Setup
 
@@ -29,7 +29,7 @@ Use Python 3.11 or 3.12. From the repository root:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install numpy opencv-python pytest kaggle ultralytics matplotlib PySide6
+python -m pip install numpy opencv-python pytest kaggle ultralytics matplotlib PySide6 reportlab
 ```
 
 Dependency versions will be pinned during Phase 6, after the complete runtime dependency set is known. Ultralytics installs PyTorch as a dependency. On a CPU-only Linux machine, install the smaller CPU wheels first to avoid downloading unused CUDA libraries:
@@ -144,6 +144,14 @@ python scripts/run_app.py
 
 The Inspect tab accepts one image, every supported image directly inside a folder, or a captured webcam frame. Folder work runs outside the GUI thread and writes each completed result to `data/inspections.db`. Webcam inference is operator-triggered rather than continuous; captured frames are saved under `data/captures/` so history rows refer to real files. The History tab shows the stored UTC timestamp, image path, result, confidence, and notes, with result and UTC date filters.
 
+### Export inspection reports
+
+Apply any result or UTC date filters in the History tab, then choose **Export CSV** or **Export PDF**. Both actions export the currently filtered records.
+
+- CSV uses the standard library and includes ID, UTC timestamp, image path, result, confidence, and notes.
+- PDF uses one ReportLab template with the inspection date range, pass/fail counts, defect rate, outcome chart, and up to four readable example images.
+- Missing example image files are omitted from the PDF, but their inspection rows still contribute to the summary counts.
+
 ![Inspect view with a defective casting](docs/screenshots/inspect-view.png)
 
 ![SQLite-backed inspection history](docs/screenshots/history-view.png)
@@ -154,7 +162,8 @@ The Inspect tab accepts one image, every supported image directly inside a folde
 2. Inspect known acceptable and defective held-out images; confirm the badge, confidence, and approximate defective highlight.
 3. Select `tests/fixtures/` as a folder; confirm both images complete and two history rows appear.
 4. Start the webcam, inspect one frame, and confirm the saved capture appears in history. This step requires local camera permission.
-5. Filter history by result and UTC date, then restart the app and confirm the rows persist.
+5. Filter history by result and UTC date, export both formats, and confirm each output opens correctly.
+6. Restart the app and confirm the history rows persist.
 
 For a headless startup check that loads the real weights and exits automatically:
 
