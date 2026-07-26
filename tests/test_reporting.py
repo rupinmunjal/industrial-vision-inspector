@@ -7,6 +7,7 @@ import pytest
 from industrial_vision_inspector.reporting import (
     CSV_FIELDS,
     prepare_report_data,
+    write_inspection_pdf,
     write_inspections_csv,
 )
 from industrial_vision_inspector.storage import InspectionDatabase
@@ -104,3 +105,32 @@ def test_report_data_validates_empty_input_and_example_limit() -> None:
         prepare_report_data([])
     with pytest.raises(ValueError, match="max_examples"):
         prepare_report_data([], max_examples=-1)
+
+
+def test_pdf_report_generates_nontrivial_file_from_sample_rows(
+    tmp_path: Path,
+) -> None:
+    database = InspectionDatabase(tmp_path / "inspections.db")
+    database.insert_inspection(
+        FIXTURES / "ok_sample.ppm",
+        "pass",
+        0.93,
+        timestamp=datetime(2026, 7, 26, 12, tzinfo=timezone.utc),
+    )
+    database.insert_inspection(
+        FIXTURES / "defective_sample.ppm",
+        "fail",
+        0.96,
+        timestamp=datetime(2026, 7, 26, 13, tzinfo=timezone.utc),
+    )
+    output = tmp_path / "inspection-report.pdf"
+
+    returned_path = write_inspection_pdf(
+        prepare_report_data(database.list_inspections()),
+        output,
+        generated_at=datetime(2026, 7, 26, 14, tzinfo=timezone.utc),
+    )
+
+    assert returned_path == output
+    assert output.is_file()
+    assert output.stat().st_size > 2_000
