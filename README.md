@@ -173,6 +173,23 @@ QT_QPA_PLATFORM=offscreen python scripts/run_app.py \
   --smoke-test
 ```
 
+## Package the desktop application
+
+PyInstaller can produce a self-contained application folder for the current operating system. Train the model first so `models/casting_yolov8n_cls.pt` exists, then run:
+
+```bash
+pyinstaller --noconfirm --clean \
+  --name industrial-vision-inspector \
+  --windowed \
+  --paths src \
+  --add-data "models/casting_yolov8n_cls.pt:models" \
+  scripts/run_app.py
+```
+
+Launch `dist/industrial-vision-inspector/industrial-vision-inspector`. The trained weights are bundled as a read-only application resource, while inspection history and webcam captures are written under the executable's `data/` directory. On Windows, use `;` instead of `:` in the `--add-data` value.
+
+PyInstaller output is platform-specific, so build separately on each target operating system. The verified Linux application folder is approximately 1.4 GB because it contains PyTorch, Qt, OpenCV, and their native libraries; PySide6 6.11 Linux wheels also require glibc 2.34 or newer. This project intentionally does not include an installer, code signing, binary-size optimization, or a release pipeline.
+
 ## Current limitations
 
 - Trained weights are not committed; reproduce them with `scripts/train_model.py` before running inference.
