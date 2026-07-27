@@ -29,14 +29,14 @@ Use Python 3.11 or 3.12. From the repository root:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install numpy opencv-python pytest kaggle ultralytics matplotlib PySide6 reportlab
+python -m pip install -r requirements.txt
 ```
 
-Dependency versions will be pinned during Phase 6, after the complete runtime dependency set is known. Ultralytics installs PyTorch as a dependency. On a CPU-only Linux machine, install the smaller CPU wheels first to avoid downloading unused CUDA libraries:
+The direct runtime, test, and packaging dependencies are pinned in `requirements.txt`. Ultralytics installs PyTorch as a dependency. On a CPU-only Linux machine, install the smaller CPU wheels before the requirements to avoid downloading unused CUDA libraries:
 
 ```bash
 python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-python -m pip install ultralytics
+python -m pip install -r requirements.txt
 ```
 
 ### Kaggle credentials and dataset
