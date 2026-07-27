@@ -4,9 +4,15 @@ Industrial Vision Inspector is a desktop quality-control project for classifying
 
 Manual visual inspection can vary between operators and across a long shift. A small classification model can provide a consistent first-pass decision and preserve each result for review. This project is intentionally a demonstrator, not a claim of production-line readiness.
 
-## Detection decision
+On a casting line, a missed defect can send a weak component downstream, while an incorrect rejection adds scrap and rework. The application gives an operator a repeatable pass/fail result, a visual cue for failed parts, and a timestamped record that can be filtered or exported for later quality review. It supports operator decisions rather than replacing the process controls and validation required on a production line.
 
-The project uses a **classification-first** pipeline because the Kaggle dataset provides image-level `defective` and `ok_front` labels, not defect bounding boxes. YOLOv8 classification is faster and more reliable to train on modest hardware than a detector trained on noisy pseudo-boxes. Defective images will receive approximate OpenCV contour highlights for visual feedback; those highlights are not learned localization ground truth.
+## Design decisions
+
+- **Classification-first:** the dataset provides image-level `defective` and `ok_front` labels, not defect bounding boxes. YOLOv8 classification is more honest and reliable than training a detector on generated pseudo-boxes. OpenCV contours provide approximate visual feedback only.
+- **YOLOv8n classification:** the smallest YOLOv8 classifier trains in a practical time on a laptop or free-tier GPU while reaching 99.46% held-out accuracy on this dataset. A larger model would add inference and packaging cost without a demonstrated need.
+- **SQLite without an ORM:** one local operator and one table do not justify a database server or an ORM layer. The standard library provides transactions, persistence, and parameterized queries with little code.
+- **One shared inspection path:** the CLI and PySide6 application both call `Inspector.inspect`, preventing UI-specific prediction logic from drifting from evaluated behavior.
+- **ReportLab for PDF output:** the report needs fixed document layout, tables, charts, images, and page footers. ReportLab handles those directly without introducing a configurable report system.
 
 ## Architecture
 
@@ -127,6 +133,15 @@ The following results come from the untouched 1,105-image test split. `defective
 The test set contained 472 true negatives, 627 true positives, no false positives, and 6 false negatives.
 
 ![Held-out confusion matrix](reports/metrics/confusion_matrix.png)
+
+## Sample inspections
+
+These checked-in examples come from the held-out test split and were generated with `models/casting_yolov8n_cls.pt`. The defective example was classified as fail at 99.94% confidence and received an approximate OpenCV highlight. The acceptable example was classified as pass at 100.00% confidence and is shown without a highlight.
+
+| Input | Inspection output |
+| --- | --- |
+| ![Defective casting input](docs/samples/defective-input.jpg) | ![Defective casting highlighted](docs/samples/defective-output.jpg) |
+| ![Acceptable casting input](docs/samples/acceptable-input.jpg) | ![Acceptable casting output](docs/samples/acceptable-output.jpg) |
 
 ## Inspection storage
 
